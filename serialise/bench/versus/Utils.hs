@@ -1,20 +1,21 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Utils
   ( prepBenchmarkFiles -- :: IO ()
   ) where
 
 import           Data.Time
-import           System.IO (hFlush, stdout)
+import           System.IO
 import           System.Mem
 import           Control.Monad (when)
+import qualified Control.Exception as Exception
 import           System.FilePath
 import           System.Directory
+import           Control.DeepSeq (force)
 
-import qualified Data.ByteString        as B
-import qualified Data.ByteString.Lazy   as BS
+import qualified Data.ByteString.Lazy   as LBS
 import qualified Codec.Compression.GZip as GZip
 
-import           Macro.DeepSeq ()
 import qualified Macro.Load      as Load
 import qualified Macro.PkgBinary as PkgBinary
 import qualified Macro.PkgCereal as PkgCereal
@@ -27,8 +28,8 @@ import qualified Macro.CBOR      as CBOR
 -- and Linux.
 getHackageIndexLocation :: IO FilePath
 getHackageIndexLocation = do
-  cabalDir <- getAppUserDataDirectory "cabal"
-  let dir = cabalDir </> "packages" </> "hackage.haskell.org"
+  cabalCacheDir <- getXdgDirectory XdgCache "cabal"
+  let dir = cabalCacheDir </> "packages" </> "hackage.haskell.org"
   return (dir </> "01-index.tar.gz")
 
 -- | Copy the hackage index to a local directory. Returns the path to the
@@ -37,7 +38,7 @@ copyHackageIndex :: IO (FilePath, FilePath)
 copyHackageIndex = do
   hackageIndex <- getHackageIndexLocation
 
-  let dataDir = "bench" </> "data"
+  let dataDir = "serialise" </> "bench" </> "data"
       dest    = dataDir </> "01-index.tar.gz"
 
   -- Create the data dir, and copy the index.
@@ -57,47 +58,44 @@ prepBenchmarkFiles = do
   -- Set up index
   (destDir, indexFile) <- copyHackageIndex
 
-  -- Read it, and take about 20,000 entries. And a small set of 1,000 too.
-  let readIndex = Load.readPkgIndex . GZip.decompress
-  Right pkgs_ <- fmap readIndex (BS.readFile indexFile)
-  let _pkgs1k  = take 1000  pkgs_
-      _pkgs20k = take 20000 pkgs_
-
-      -- Write a file to the temporary directory, if it does not exist.
-      write p bs = do
-        let file = destDir </> p
-        exists <- doesFileExist file
-        when (not exists) $ do
-          let msg = "Creating " ++ file
-          notice msg (BS.writeFile file bs)
-      -- Write a file to the temporary directory, if it does not exist.
-      -- Strict version.
-      writeS p bs = do
-        let file = destDir </> p
-        exists <- doesFileExist file
-        when (not exists) $ do
-          let msg = "Creating " ++ file
-          notice msg (B.writeFile file bs)
+  -- Read it
+  pkgs <- notice "parsing 150k packages" $
+            Exception.evaluate
+          . force
+          . take 150000
+          . Load.readPkgIndex
+          . GZip.decompress
+        =<< LBS.readFile indexFile
 
   -- Encode that dense data in several forms, and write those forms out
-  -- to disk. TODO FIXME (aseipp): should we actually have the -small variant?
-  -- It doesn't have any similar benchmarks for the other libraries, and seems
-  -- like it isn't very useful, given the other ones.
-  write "binary.bin"     (PkgBinary.serialise _pkgs20k)
-  write "cereal.bin"     (PkgCereal.serialise _pkgs20k)
-  write "cbor.bin"       (CBOR.serialise      _pkgs20k)
-  writeS "store.bin"     (PkgStore.serialise  _pkgs20k)
---write "cbor-small.bin" (CBOR.serialise      _pkgs1k)
+  -- to disk.
+  write (destDir </> "binary.bin") (PkgBinary.serialise pkgs)
+  write (destDir </> "cereal.bin") (PkgCereal.serialise pkgs)
+  write (destDir </> "cbor.bin")   (CBOR.serialise      pkgs)
+  writeS (destDir </> "store.bin") (PkgStore.serialise  pkgs)
 
   -- And before we finish: do a garbage collection to clean up anything left
   -- over.
   notice "Preparation done; performing GC" doGC
 
+  where
+    -- Write a file to the temporary directory, if it does not exist.
+    write file lbs = do
+      exists <- doesFileExist file
+      when (not exists) $ do
+        let msg = "Creating " ++ file
+        notice msg (writeFileAtomic file lbs)
+
+    -- Write a file to the temporary directory, if it does not exist.
+    -- Strict version.
+    writeS file = write file . LBS.fromStrict
+
+
 --------------------------------------------------------------------------------
 
 -- | Do a garbage collection.
 doGC :: IO ()
-doGC = performMinorGC >> performMajorGC
+doGC = performMajorGC
 
 -- Write a notice to the screen (with timing information).
 notice :: String -> IO a -> IO a
@@ -115,3 +113,22 @@ timeIt action = do
   x   <- action
   t'  <- getCurrentTime
   return (x, diffUTCTime t' t)
+
+writeFileAtomic :: FilePath -> LBS.ByteString -> IO ()
+writeFileAtomic targetPath content = do
+  let targetFile = takeFileName targetPath
+  tmpDir <- getTemporaryDirectory
+  Exception.bracketOnError
+    (openBinaryTempFileWithDefaultPermissions tmpDir $ targetFile <.> "tmp")
+    (\(tmpPath, handle) -> hClose handle >> removeFile tmpPath)
+    ( \(tmpPath, handle) -> do
+        LBS.hPut handle content
+        hClose handle
+        Exception.catch
+          (renameFile tmpPath targetPath)
+          ( \(_ :: Exception.SomeException) -> do
+              copyFile tmpPath targetPath
+              removeFile tmpPath
+          )
+    )
+

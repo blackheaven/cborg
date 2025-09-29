@@ -7,7 +7,8 @@ import           Criterion.Main
 import qualified Data.ByteString        as B
 import qualified Data.ByteString.Lazy   as BS
 
-import           Macro.DeepSeq ()
+import Utils (prepBenchmarkFiles)
+
 import qualified Macro.PkgBinary as PkgBinary
 import qualified Macro.PkgCereal as PkgCereal
 import qualified Macro.PkgStore  as PkgStore
@@ -16,7 +17,8 @@ import qualified Macro.CBOR as CBOR
 
 benchmarks :: [Benchmark]
 benchmarks =
-  [ bgroup "decode-index"
+  [ env prepBenchmarkFiles $ \_ ->
+    bgroup "decode-index"
       [ bgroup "binary"
           [ envBinary $ \v ->
               bench "deserialise" $ nf PkgBinary.deserialise v
@@ -34,7 +36,8 @@ benchmarks =
               bench "deserialise" $ nf CBOR.deserialise v
           ]
       ]
-  , bgroup "decode-index-noaccum"
+  , env prepBenchmarkFiles $ \_ ->
+    bgroup "decode-index-noaccum"
       [ bgroup "binary"
           [ envBinary $ \v ->
               bench "deserialise" $ nf PkgBinary.deserialiseNull v
@@ -59,4 +62,4 @@ benchmarks =
     -- | Read one of the pre-encoded binary files out of the
     -- data directory.
     readBin :: FilePath -> IO B.ByteString
-    readBin f = B.readFile ("bench" </> "data" </> f <.> "bin")
+    readBin f = B.readFile ("serialise" </> "bench" </> "data" </> f <.> "bin")

@@ -9,9 +9,7 @@ import qualified Data.ByteString        as B
 import qualified Data.ByteString.Lazy   as BS
 import qualified Codec.Compression.GZip as GZip
 
-import qualified Macro.Types     as Types
-import qualified Macro.MemSize
-import           Macro.DeepSeq ()
+import Distribution.PackageDescription (GenericPackageDescription)
 import qualified Macro.Load as Load
 
 import qualified Macro.ReadShow  as ReadShow
@@ -23,19 +21,16 @@ import qualified Macro.PkgStore as PkgStore
 
 import qualified Macro.CBOR as CBOR
 
-readBigTestData :: IO [Types.GenericPackageDescription]
-readBigTestData = do
-    Right pkgs_ <- fmap (Load.readPkgIndex . GZip.decompress)
-                        (BS.readFile "bench/data/01-index.tar.gz")
-    let tstdata  = take 100 pkgs_
-    return tstdata
+readBigTestData :: IO [GenericPackageDescription]
+readBigTestData =
+    fmap (take 100000 . Load.readPkgIndex . GZip.decompress)
+         (BS.readFile "serialise/bench/data/01-index.tar.gz")
 
 benchmarks :: [Benchmark]
 benchmarks =
   [ env readBigTestData $ \tstdata ->
     bgroup "reference"
       [ bench "deepseq" (whnf rnf tstdata)
-      , bench "memSize" (whnf (flip Macro.MemSize.memSize 0) tstdata)
       ]
 
   , env readBigTestData $ \tstdata ->
@@ -92,7 +87,7 @@ benchmarks =
     perfEncodeBinary, perfEncodeCereal, perfEncodeAesonGeneric,
       perfEncodeAesonTH, perfEncodeReadShow,
       perfEncodeCBOR
-      :: [Types.GenericPackageDescription] -> Int64
+      :: [GenericPackageDescription] -> Int64
 
 
     perfEncodeBinary       = BS.length . PkgBinary.serialise
@@ -105,7 +100,7 @@ benchmarks =
     perfDecodeBinary, perfDecodeCereal, perfDecodeAesonGeneric,
       perfDecodeAesonTH, perfDecodeReadShow,
       perfDecodeCBOR
-      :: BS.ByteString -> [Types.GenericPackageDescription]
+      :: BS.ByteString -> [GenericPackageDescription]
 
     perfDecodeBinary       = PkgBinary.deserialise
     perfDecodeCereal       = PkgCereal.deserialise
@@ -114,9 +109,9 @@ benchmarks =
     perfDecodeReadShow     = ReadShow.deserialise
     perfDecodeCBOR        = CBOR.deserialise
 
-    perfDecodeStore :: B.ByteString -> [Types.GenericPackageDescription]
+    perfDecodeStore :: B.ByteString -> [GenericPackageDescription]
     perfDecodeStore = PkgStore.deserialise
-    perfEncodeStore :: [Types.GenericPackageDescription] -> Int
+    perfEncodeStore :: [GenericPackageDescription] -> Int
     perfEncodeStore = B.length . PkgStore.serialise
 
     -- Convert any lazy ByteString to ByteString lazy bytestring
