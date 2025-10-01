@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE BangPatterns #-}
 -- For PackageDescription and friends
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -111,9 +112,15 @@ instance Serialise GenericPackageDescription
 
 -- Custom instances
 
+#if MIN_VERSION_Cabal_syntax(3,14,0)
+instance Serialise (SymbolicPathX r f t) where
+  encode = encode . getSymbolicPath
+  decode = fmap unsafeMakeSymbolicPath decode
+#else
 instance Serialise (SymbolicPath f t) where
   encode = encode . getSymbolicPath
   decode = fmap unsafeMakeSymbolicPath decode
+#endif
 
 instance Serialise SPDX.LicenseId where
   encode = encode . fromEnum

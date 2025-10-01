@@ -1,5 +1,7 @@
+{-# LANGUAGE CPP #-}
 {-# OPTIONS_GHC -fno-warn-orphans -fsimpl-tick-factor=500 #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+
 module Macro.PkgStore where
 
 import Distribution.Package
@@ -93,7 +95,11 @@ instance Store GenericPackageDescription
 
 -- Custom instances
 
+#if MIN_VERSION_Cabal_syntax(3,14,0)
+instance Store (SymbolicPathX r f t) where
+#else
 instance Store (SymbolicPath f t) where
+#endif
   size = contramap getSymbolicPath size
   poke = poke . getSymbolicPath
   peek = fmap unsafeMakeSymbolicPath peek

@@ -1,5 +1,7 @@
+{-# LANGUAGE CPP #-}
 {-# OPTIONS_GHC -fsimpl-tick-factor=500 #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+
 module Macro.PkgCereal where
 
 import Distribution.Package
@@ -106,7 +108,11 @@ instance Serialize GenericPackageDescription
 
 -- Custom instances
 
+#if MIN_VERSION_Cabal_syntax(3,14,0)
+instance Serialize (SymbolicPathX r f t) where
+#else
 instance Serialize (SymbolicPath f t) where
+#endif
   put = put . getSymbolicPath
   get = fmap unsafeMakeSymbolicPath get
 

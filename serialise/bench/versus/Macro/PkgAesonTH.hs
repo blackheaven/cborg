@@ -1,7 +1,9 @@
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE TemplateHaskell #-}
+
 module Macro.PkgAesonTH where
 
 import Distribution.Package
@@ -43,10 +45,18 @@ instance ToJSON a => ToJSON (NonEmptySet a) where
 instance (FromJSON a, Ord a) => FromJSON (NonEmptySet a) where
   parseJSON = fmap fromNonEmpty . parseJSON
 
+#if MIN_VERSION_Cabal_syntax(3,14,0)
+instance ToJSON (SymbolicPathX r f t) where
+#else
 instance ToJSON (SymbolicPath f t) where
+#endif
   toJSON = toJSON . getSymbolicPath
 
+#if MIN_VERSION_Cabal_syntax(3,14,0)
+instance FromJSON (SymbolicPathX r f t) where
+#else
 instance FromJSON (SymbolicPath f t) where
+#endif
   parseJSON = fmap unsafeMakeSymbolicPath . parseJSON
 
 deriving via ViaPrettyParsec PkgconfigVersion
