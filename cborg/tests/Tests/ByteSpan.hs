@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveFunctor, BangPatterns #-}
 
-module Tests.GetInputSpan (testTree) where
+module Tests.ByteSpan (testTree) where
 
 import           Data.Word
 import           Data.Either (isLeft)
@@ -30,7 +30,7 @@ import Prelude hiding (encodeFloat, decodeFloat)
 
 testTree :: TestTree
 testTree =
-  testGroup "getInputSpan"
+  testGroup "peekByteSpan"
     [ testGroup "ATerm framework"
         [ testProperty "isomorphic 1" prop_ATerm_isomorphic
         , testProperty "isomorphic 2" prop_ATerm_isomorphic2
@@ -38,23 +38,23 @@ testTree =
         ]
     , testGroup "examples"
         -- basic smoke tests
-        [ testProperty "ex01" $ prop_peekByteOffset_deserialise $ Term.TFloat 1.0 -- simplest test
-        , testProperty "ex02" $ prop_peekByteOffset_deserialise $ Term.TList [Term.TSimple 0] -- tests non-zero offsets
-        , testProperty "ex03" $ prop_peekByteOffset_splits2 $ Term.TFloat 1.0 -- tests multiple chunks
-        , testProperty "ex04" $ prop_peekByteOffset_splits2 $ Term.TList [Term.TStringI $ fromString $ replicate 100 'x'] -- tests getTokenVarLen
-        , testProperty "ex05" $ prop_peekByteOffset_splits3 $ Term.TString $ fromString "abcdef"
-        , testProperty "ex06" $ prop_peekByteOffset_splits2 $ Term.TMapI [(Term.TListI [],Term.TString (fromString "ab")  )]
-        , testProperty "ex07" $ prop_peekByteOffset_splits3 $ Term.TMapI [(Term.TString (fromString "xyz"),Term.TStringI (fromString ""))]
+        [ testProperty "ex01" $ prop_peekByteSpan_deserialise $ Term.TFloat 1.0 -- simplest test
+        , testProperty "ex02" $ prop_peekByteSpan_deserialise $ Term.TList [Term.TSimple 0] -- tests non-zero offsets
+        , testProperty "ex03" $ prop_peekByteSpan_splits2 $ Term.TFloat 1.0 -- tests multiple chunks
+        , testProperty "ex04" $ prop_peekByteSpan_splits2 $ Term.TList [Term.TStringI $ fromString $ replicate 100 'x'] -- tests getTokenVarLen
+        , testProperty "ex05" $ prop_peekByteSpan_splits3 $ Term.TString $ fromString "abcdef"
+        , testProperty "ex06" $ prop_peekByteSpan_splits2 $ Term.TMapI [(Term.TListI [],Term.TString (fromString "ab")  )]
+        , testProperty "ex07" $ prop_peekByteSpan_splits3 $ Term.TMapI [(Term.TString (fromString "xyz"),Term.TStringI (fromString ""))]
         ]
     , testProperty "empty-deserialise" empty_deserialise
     , testProperty "empty-deserialise-fail" empty_deserialise_fail
-    , testProperty "bytes deserialise" prop_peekByteOffset_deserialise
-    , testProperty "bytes reserialise" prop_peekByteOffset_reserialise
-    , testProperty "non-canonical encoding" prop_peekByteOffset_noncanonical
+    , testProperty "bytes deserialise" prop_peekByteSpan_deserialise
+    , testProperty "bytes reserialise" prop_peekByteSpan_reserialise
+    , testProperty "non-canonical encoding" prop_peekByteSpan_noncanonical
     , localOption (QuickCheckMaxSize 30) $
-      testProperty "same offsets with all 2-splits" prop_peekByteOffset_splits2
+      testProperty "same offsets with all 2-splits" prop_peekByteSpan_splits2
     , localOption (QuickCheckMaxSize 20) $
-      testProperty "same offsets with all 3-splits" prop_peekByteOffset_splits3
+      testProperty "same offsets with all 3-splits" prop_peekByteSpan_splits3
     ]
 
 
@@ -81,9 +81,12 @@ prop_ATerm_isomorphic3 t =
 
 
 --------------------------------------------------------------------------------
--- Properties of getInputSpan
+-- Properties of peekByteSpan
 --
--- The comments talk about peekByteOffset, but it's the same for getInputSpan
+-- The tests here are based on the tests for peekByteOffset. The peekByteOffset
+-- tests need a two-step deserialiseATerm: first to decide offset spans and
+-- then to select out the original input, whereas with peekByteSpan we can do
+-- that in one step.
 --
 
 -- | A smoke test that nothing weird happens with an empty span the input.
@@ -100,8 +103,8 @@ empty_deserialise_fail = isLeft (deserialiseFromBytes emptyDecoder LBS.empty)
 
 emptyDecoder :: Decoder s LBS.ByteString
 emptyDecoder = do
-    markInput
-    getInputSpan
+    openByteSpan
+    peekByteSpan
 
 -- | A key consistency property for terms annotated with their bytes:
 -- taking those bytes and deserialising them gives the corresponding term
@@ -114,7 +117,7 @@ prop_ATerm_deserialise t@(ATerm _ bs) =
 -- with their bytes: taking the term and serialising it gives the bytes.
 --
 -- Note this is /only/ expected to hold for canonical encodings. See
--- 'prop_peekByteOffset_noncanonical' for a demonstration of this not holding
+-- 'prop_peekByteSpan_noncanonical' for a demonstration of this not holding
 -- for non-canonical encodings.
 --
 prop_ATerm_reserialise :: ATerm ByteSpan -> Bool
@@ -124,8 +127,8 @@ prop_ATerm_reserialise t@(ATerm _ bs) =
 -- | For an 'ATerm' annotated with its bytes (obtained by decoding a term),
 -- 'prop_ATerm_deserialise' should be true for the whole term and all subterms.
 --
-prop_peekByteOffset_deserialise :: Term -> Property
-prop_peekByteOffset_deserialise t =
+prop_peekByteSpan_deserialise :: Term -> Property
+prop_peekByteSpan_deserialise t =
     conjoin (map prop_ATerm_deserialise (subterms t'))
   where
     t' = deserialiseATerm (serialiseTerm t)
@@ -134,8 +137,8 @@ prop_peekByteOffset_deserialise t =
 -- term), 'prop_ATerm_serialise' should be true for the whole term and all
 -- subterms.
 --
-prop_peekByteOffset_reserialise :: Term -> Bool
-prop_peekByteOffset_reserialise t =
+prop_peekByteSpan_reserialise :: Term -> Bool
+prop_peekByteSpan_reserialise t =
     all prop_ATerm_reserialise (subterms t')
   where
     t' = deserialiseATerm (serialiseTerm t)
@@ -143,13 +146,13 @@ prop_peekByteOffset_reserialise t =
 -- | For an 'ATerm' annotated with its bytes obtained by decoding a
 -- /non-canonical/ term, 'prop_ATerm_serialise' should not always hold.
 --
--- This is in some sense the essence of why we want 'peekByteOffset' in the
+-- This is in some sense the essence of why we want 'peekByteSpan' in the
 -- first place: to get the bytes corresponding to a term we have to get the
 -- original input bytes since we cannot rely on re-serialising to recover the
 -- bytes (at least not without relying on and checking for canonical encodings).
 --
-prop_peekByteOffset_noncanonical :: RefImpl.Term -> Property
-prop_peekByteOffset_noncanonical t =
+prop_peekByteSpan_noncanonical :: RefImpl.Term -> Property
+prop_peekByteSpan_noncanonical t =
     not (RefImpl.isCanonicalTerm t) ==>
     not (prop_ATerm_reserialise t')
   where
@@ -159,8 +162,8 @@ prop_peekByteOffset_noncanonical t =
 -- block boundaries in the input data stream. This checks the property for all
 -- possible 2-chunk splits of the input data.
 --
-prop_peekByteOffset_splits2 :: Term -> Property
-prop_peekByteOffset_splits2 t =
+prop_peekByteSpan_splits2 :: Term -> Property
+prop_peekByteSpan_splits2 t =
     conjoin [ counterexample (show (LBS.toChunks lbs')) $ deserialiseATerm lbs' `eqATermProp` t'
             | lbs' <- splits2 lbs ]
   where
@@ -171,8 +174,8 @@ prop_peekByteOffset_splits2 t =
 -- block boundaries in the input data stream. This checks the property for all
 -- possible 3-chunk splits of the input data.
 --
-prop_peekByteOffset_splits3 :: Term -> Property
-prop_peekByteOffset_splits3 t =
+prop_peekByteSpan_splits3 :: Term -> Property
+prop_peekByteSpan_splits3 t =
     conjoin [ counterexample (show (LBS.toChunks lbs')) $ deserialiseATerm lbs' `eqATermProp` t'
             | lbs' <- splits3 lbs ]
   where
@@ -183,17 +186,15 @@ prop_peekByteOffset_splits3 t =
 -- Decoding a term, annotated with its underlying bytes
 --
 
-type ByteSpan = LBS.ByteString
-
 deserialiseATerm :: LBS.ByteString -> ATerm ByteSpan
 deserialiseATerm = either throw snd . deserialiseFromBytes decodeATerm
 
 decodeATerm :: Decoder s (ATerm ByteSpan)
 decodeATerm = do
-    markInput
+    openByteSpan
     t     <- decodeTermFATerm
-    lbs   <- getInputSpan
-    unmarkInput
+    lbs   <- peekByteSpan
+    closeByteSpan
     return (ATerm t lbs)
 
 decodeTermFATerm :: Decoder s (TermF (ATerm ByteSpan))

@@ -169,7 +169,6 @@ prop_peekByteOffset_splits3 t =
 --
 
 type Offsets  = (ByteOffset, ByteOffset)
-type ByteSpan = LBS.ByteString
 
 deserialiseATermOffsets :: LBS.ByteString -> ATerm Offsets
 deserialiseATermOffsets = either throw snd . deserialiseFromBytes decodeATerm

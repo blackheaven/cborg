@@ -245,9 +245,9 @@ data SlowPath s a
 #else
    | SlowPeekByteOffset            {-# UNPACK #-} !ByteString (Int#         -> ST s (DecodeAction s a))
 #endif
-   | SlowMarkInput                 {-# UNPACK #-} !ByteString (ST s (DecodeAction s a))
-   | SlowUnmarkInput               {-# UNPACK #-} !ByteString (ST s (DecodeAction s a))
-   | SlowGetInputSpan              {-# UNPACK #-} !ByteString (LBS.ByteString -> ST s (DecodeAction s a))
+   | SlowOpenByteSpan              {-# UNPACK #-} !ByteString (ST s (DecodeAction s a))
+   | SlowCloseByteSpan             {-# UNPACK #-} !ByteString (ST s (DecodeAction s a))
+   | SlowPeekByteSpan              {-# UNPACK #-} !ByteString (LBS.ByteString -> ST s (DecodeAction s a))
    | SlowDecodeAction              {-# UNPACK #-} !ByteString (DecodeAction s a)
    | SlowFail                      {-# UNPACK #-} !ByteString String
 
@@ -704,9 +704,9 @@ go_fast !bs (PeekTokenType k) =
 go_fast !bs (PeekAvailable k) = k (case BS.length bs of I# len# -> len#) >>= go_fast bs
 
 go_fast !bs da@PeekByteOffset{} = go_fast_end bs da
-go_fast !bs da@MarkInput{}      = go_fast_end bs da
-go_fast !bs da@UnmarkInput{}    = go_fast_end bs da
-go_fast !bs da@GetInputSpan{}   = go_fast_end bs da
+go_fast !bs da@OpenByteSpan{}   = go_fast_end bs da
+go_fast !bs da@CloseByteSpan{}  = go_fast_end bs da
+go_fast !bs da@PeekByteSpan{}   = go_fast_end bs da
 go_fast !bs da@D.Fail{} = go_fast_end bs da
 go_fast !bs da@D.Done{} = go_fast_end bs da
 
@@ -727,9 +727,9 @@ go_fast_end !bs (D.Done x)        = return $! FastDone bs x
 go_fast_end !bs (PeekAvailable k) = k (case BS.length bs of I# len# -> len#) >>= go_fast_end bs
 
 go_fast_end !bs (PeekByteOffset k) = return $! SlowPeekByteOffset bs k
-go_fast_end !bs (MarkInput k)      = return $! SlowMarkInput bs k
-go_fast_end !bs (UnmarkInput k)    = return $! SlowUnmarkInput bs k
-go_fast_end !bs (GetInputSpan k)   = return $! SlowGetInputSpan bs k
+go_fast_end !bs (OpenByteSpan k)   = return $! SlowOpenByteSpan bs k
+go_fast_end !bs (CloseByteSpan k)  = return $! SlowCloseByteSpan bs k
+go_fast_end !bs (PeekByteSpan k)   = return $! SlowPeekByteSpan bs k
 
 -- the next two cases only need the 1 byte token header
 go_fast_end !bs da | BS.null bs = return $! SlowDecodeAction bs da
@@ -1207,8 +1207,12 @@ go_fast_end !bs (ConsumeMapLenOrIndef k) =
       DecodedToken sz (I# n#) -> k n# >>= go_fast_end (BS.unsafeDrop sz bs)
 
 
--- Marks is a record of byteoffsets for input marks as well as input chunks seen since the first mark.
--- The structure is a stack to support nesting marks / getInputSpan
+-- | 'Marks' is a record of 'ByteOffsets' for input byte span marks, as well as
+-- input chunks seen since the first mark.
+--
+-- The structure is a stack to support nesting of 'OpenByteSpan' and
+-- 'CloseByteSpan'.
+--
 data Marks
     = NoMarks
     | Marks !ByteOffsets !Chunks
@@ -1230,39 +1234,39 @@ data Chunks
     | C_Cons !ByteOffset !ByteString !Chunks
   deriving Show
 
-slowMarkInput :: ByteString -> ByteOffset -> Marks -> Marks
-slowMarkInput bs off NoMarks             = Marks (BO_Last off)      (C_Cons off bs C_Nil)
-slowMarkInput _  off (Marks offs chunks) = Marks (BO_Cons off offs) chunks
+markByteSpan :: ByteString -> ByteOffset -> Marks -> Marks
+markByteSpan bs off NoMarks             = Marks (BO_Last off)      (C_Cons off bs C_Nil)
+markByteSpan _  off (Marks offs chunks) = Marks (BO_Cons off offs) chunks
 
-slowUnmarkInput :: Marks -> Marks
-slowUnmarkInput NoMarks                         = NoMarks
-slowUnmarkInput (Marks (BO_Last _)      _)      = NoMarks
-slowUnmarkInput (Marks (BO_Cons _ offs) chunks) = Marks offs chunks
+unmarkByteSpan :: Marks -> Marks
+unmarkByteSpan NoMarks                         = NoMarks
+unmarkByteSpan (Marks (BO_Last _)      _)      = NoMarks
+unmarkByteSpan (Marks (BO_Cons _ offs) chunks) = Marks offs chunks
 
-slowMarkChunk :: ByteString -> ByteOffset -> Marks -> Marks
-slowMarkChunk _  _    NoMarks            = NoMarks
-slowMarkChunk bs off (Marks offs chunks) = Marks offs (C_Cons off bs chunks)
+markChunk :: ByteString -> ByteOffset -> Marks -> Marks
+markChunk _  _    NoMarks            = NoMarks
+markChunk bs off (Marks offs chunks) = Marks offs (C_Cons off bs chunks)
 
-slowGetInputSpan :: ByteOffset -> Marks -> LBS.ByteString
-slowGetInputSpan _       NoMarks = LBS.empty
-slowGetInputSpan !offset (Marks offs chunks) =
+peekMarkedByteSpan :: ByteOffset -> Marks -> LBS.ByteString
+peekMarkedByteSpan _       NoMarks = LBS.empty
+peekMarkedByteSpan !offset (Marks offs chunks) =
     -- traceShow (off, offset, chunks) $ traceShowId $
-    slowGetInputSpan1 (headByteOffsets offs) offset chunks
+    peekMarkedByteSpan1 (headByteOffsets offs) offset chunks
 
-slowGetInputSpan1 :: ByteOffset -> ByteOffset -> Chunks -> LBS.ByteString
-slowGetInputSpan1 !_ !_ C_Nil = LBS.empty
-slowGetInputSpan1 !a !b (C_Cons c bs chunks) =
+peekMarkedByteSpan1 :: ByteOffset -> ByteOffset -> Chunks -> LBS.ByteString
+peekMarkedByteSpan1 !_ !_ C_Nil = LBS.empty
+peekMarkedByteSpan1 !a !b (C_Cons c bs chunks) =
     assert (b >= c) $
     if a <= c
     -- a <= b, a <= c: take a prefix of the current chunk, recurse
-    then slowGetInputSpan2 [BS.take (int64ToInt (b - c)) bs] a chunks
+    then peekMarkedByteSpan2 [BS.take (int64ToInt (b - c)) bs] a chunks
     -- c < a <= b: the input span is completely inside the current chunk.
     else LBS.fromStrict $ BS.take (int64ToInt (b - a)) $ BS.drop (int64ToInt (a - c)) bs
 
-slowGetInputSpan2 :: [ByteString] -> ByteOffset -> Chunks -> LBS.ByteString
-slowGetInputSpan2 bss !_ C_Nil = LBS.fromChunks bss
-slowGetInputSpan2 bss !a (C_Cons c bs chunks)
-    | a < c     = slowGetInputSpan2 (bs : bss) a chunks
+peekMarkedByteSpan2 :: [ByteString] -> ByteOffset -> Chunks -> LBS.ByteString
+peekMarkedByteSpan2 bss !_ C_Nil = LBS.fromChunks bss
+peekMarkedByteSpan2 bss !a (C_Cons c bs chunks)
+    | a < c     = peekMarkedByteSpan2 (bs : bss) a chunks
     | a == c    = LBS.fromChunks (bs : bss)
     | otherwise = LBS.fromChunks (BS.drop (int64ToInt (a - c)) bs : bss)
 
@@ -1318,7 +1322,7 @@ go_slow da bs !offset !marks = do
       mbs <- needChunk
       case mbs of
         Nothing   -> decodeFail bs' offset' "end of input"
-        Just bs'' -> go_slow da' bs'' offset' (slowMarkChunk bs'' offset' marks)
+        Just bs'' -> go_slow da' bs'' offset' (markChunk bs'' offset' marks)
       where
         !offset' = offset + intToInt64 (BS.length bs - BS.length bs')
 
@@ -1342,18 +1346,18 @@ go_slow da bs !offset !marks = do
       where
         !offset'@(I64# off#) = offset + intToInt64 (BS.length bs - BS.length bs')
 
-    SlowMarkInput bs' k ->
-        lift k >>= \daz -> go_slow daz bs' offset' (slowMarkInput bs' offset' marks)
+    SlowOpenByteSpan bs' k ->
+        lift k >>= \daz -> go_slow daz bs' offset' (markByteSpan bs' offset' marks)
       where
         !offset' = offset + intToInt64 (BS.length bs - BS.length bs')
 
-    SlowUnmarkInput bs' k ->
-        lift k >>= \daz -> go_slow daz bs' offset' (slowUnmarkInput marks)
+    SlowCloseByteSpan bs' k ->
+        lift k >>= \daz -> go_slow daz bs' offset' (unmarkByteSpan marks)
       where
         !offset' = offset + intToInt64 (BS.length bs - BS.length bs')
 
-    SlowGetInputSpan bs' k ->
-        lift (k (slowGetInputSpan offset' marks)) >>= \daz -> go_slow daz bs' offset' marks
+    SlowPeekByteSpan bs' k ->
+        lift (k (peekMarkedByteSpan offset' marks)) >>= \daz -> go_slow daz bs' offset' marks
       where
         !offset' = offset + intToInt64 (BS.length bs - BS.length bs')
 
@@ -1384,7 +1388,7 @@ go_slow_fixup da !bs !offset !marks = do
         | otherwise
        -> go_slow_fixup da (bs <> bs') offset marks'
        where
-        marks' = slowMarkChunk bs' (offset + intToInt64 (BS.length bs)) marks
+        marks' = markChunk bs' (offset + intToInt64 (BS.length bs)) marks
 
 -- We've now got more input, but we have one token that spanned the old and
 -- new input buffers, so we have to decode that one before carrying on
@@ -1468,15 +1472,15 @@ go_slow_overlapped da sz bs_cur bs_next !offset !marks =
         where
           !(I64# off#) = offset'
 
-      SlowMarkInput bs_empty k ->
+      SlowOpenByteSpan bs_empty k ->
         assert (BS.null bs_empty) $
-        lift k >>= \daz -> go_slow daz bs' offset' (slowMarkInput bs' offset' marks)
-      SlowUnmarkInput bs_empty k ->
+        lift k >>= \daz -> go_slow daz bs' offset' (markByteSpan bs' offset' marks)
+      SlowCloseByteSpan bs_empty k ->
         assert (BS.null bs_empty) $
-        lift k >>= \daz -> go_slow daz bs' offset' (slowUnmarkInput marks)
-      SlowGetInputSpan bs_empty k ->
+        lift k >>= \daz -> go_slow daz bs' offset' (unmarkByteSpan marks)
+      SlowPeekByteSpan bs_empty k ->
         assert (BS.null bs_empty) $
-        lift (k (slowGetInputSpan offset' marks)) >>= \daz -> go_slow daz bs' offset' marks
+        lift (k (peekMarkedByteSpan offset' marks)) >>= \daz -> go_slow daz bs' offset' marks
 
       SlowFail bs_unconsumed msg ->
         decodeFail (bs_unconsumed <> bs') offset'' msg
@@ -1506,13 +1510,13 @@ getTokenVarLen len bs offset marks =
         | let n = len - BS.length bs
         , BS.length bs' >= n ->
             let !tok = bs <> BS.unsafeTake n bs'
-             in return (tok, BS.drop n bs', slowMarkChunk bs' offset  marks)
+             in return (tok, BS.drop n bs', markChunk bs' offset  marks)
 
         | otherwise -> getTokenVarLenSlow
                          [bs',bs]
                          (len - (BS.length bs + BS.length bs'))
                          (offset + intToInt64 (BS.length bs'))
-                         (slowMarkChunk bs' offset marks)
+                         (markChunk bs' offset marks)
 
 getTokenVarLenSlow
   :: [ByteString] -- ^ prefix chunks, in reverse order
@@ -1527,7 +1531,7 @@ getTokenVarLenSlow bss n offset marks = do
       Just bs
         | BS.length bs >= n ->
             let !tok = BS.concat (reverse (BS.unsafeTake n bs : bss))
-             in return (tok, BS.drop n bs, slowMarkChunk bs offset marks)
+             in return (tok, BS.drop n bs, markChunk bs offset marks)
         | otherwise -> getTokenVarLenSlow (bs:bss) (n - BS.length bs) (offset + intToInt64 (BS.length bs)) marks
 
 

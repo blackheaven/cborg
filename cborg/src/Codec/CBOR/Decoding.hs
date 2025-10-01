@@ -74,11 +74,12 @@ module Codec.CBOR.Decoding
   , peekAvailable        -- :: Decoder s Int
   , ByteOffset
   , peekByteOffset       -- :: Decoder s ByteOffset
+  , decodeWithByteOffsets
+  , ByteSpan
+  , openByteSpan         -- :: Decoder s ()
+  , closeByteSpan        -- :: Decoder s ()
+  , peekByteSpan         -- :: Decoder s LazyByteString
   , decodeWithByteSpan
-
-  , markInput            -- :: Decoder s ()
-  , unmarkInput          -- :: Decoder s ()
-  , getInputSpan         -- :: Decoder s LazyByteString
 
   -- ** Canonical CBOR
   -- $canonical
@@ -198,9 +199,9 @@ data DecodeAction s a
 #else
     | PeekByteOffset (Int#      -> ST s (DecodeAction s a))
 #endif
-    | MarkInput (ST s (DecodeAction s a))
-    | UnmarkInput (ST s (DecodeAction s a))
-    | GetInputSpan (LBS.ByteString -> ST s (DecodeAction s a))
+    | OpenByteSpan   (ST s (DecodeAction s a))
+    | CloseByteSpan  (ST s (DecodeAction s a))
+    | PeekByteSpan   (LBS.ByteString -> ST s (DecodeAction s a))
 
       -- All the canonical variants
     | ConsumeWordCanonical    (Word# -> ST s (DecodeAction s a))
@@ -983,9 +984,9 @@ type ByteOffset = Int64
 -- input bytes that makes up the encoded form of a term.
 --
 -- By keeping track of the byte offsets before and after decoding a subterm
--- (a pattern captured by 'decodeWithByteSpan') and if the overall input data
--- is retained then this is enables later retrieving the span of bytes for the
--- subterm.
+-- (a pattern captured by 'decodeWithByteOffsets') and if the overall input
+-- data is retained then this is enables later retrieving the span of bytes for
+-- the subterm.
 --
 -- @since 0.2.2.0
 peekByteOffset :: Decoder s ByteOffset
@@ -998,25 +999,6 @@ peekByteOffset = Decoder (\k -> return (PeekByteOffset (\off# -> k (I64#
     ))))
 {-# INLINE peekByteOffset #-}
 
--- |
---
--- @since 0.3.0.0
-markInput :: Decoder s ()
-markInput = Decoder (\k -> return (MarkInput (k ())))
-
--- |
---
--- @since 0.3.0.0
-unmarkInput :: Decoder s ()
-unmarkInput = Decoder (\k -> return (UnmarkInput (k ())))
-
--- |
---
--- @since 0.3.0.0
-getInputSpan :: Decoder s LBS.ByteString
-getInputSpan = Decoder (\k -> return (GetInputSpan k))
-
-
 -- | This captures the pattern of getting the byte offsets before and after
 -- decoding a subterm.
 --
@@ -1024,12 +1006,58 @@ getInputSpan = Decoder (\k -> return (GetInputSpan k))
 -- > x <- decode
 -- > !after  <- peekByteOffset
 --
-decodeWithByteSpan :: Decoder s a -> Decoder s (a, ByteOffset, ByteOffset)
-decodeWithByteSpan da = do
+-- @since 0.3.0.0
+decodeWithByteOffsets :: Decoder s a -> Decoder s (a, ByteOffset, ByteOffset)
+decodeWithByteOffsets da = do
     !before <- peekByteOffset
     x <- da
     !after  <- peekByteOffset
     return (x, before, after)
+
+-- | A span of bytes within the overall byte sequence that makes up the
+-- input to the 'Decoder'.
+--
+type ByteSpan = LBS.ByteString
+
+-- |
+--
+-- @since 0.3.0.0
+openByteSpan :: Decoder s ()
+openByteSpan = Decoder (\k -> return (OpenByteSpan (k ())))
+
+-- |
+--
+-- @since 0.3.0.0
+closeByteSpan :: Decoder s ()
+closeByteSpan = Decoder (\k -> return (CloseByteSpan (k ())))
+
+-- |
+--
+-- Note: the 'ByteSpan' returned is a slice of the original decoder input
+-- stream, and thus will retain the input buffers. If you need to retain the
+-- byte span for long, it is advisable to copy the span.
+--
+-- @since 0.3.0.0
+peekByteSpan :: Decoder s ByteSpan
+peekByteSpan = Decoder (\k -> return (PeekByteSpan k))
+
+
+-- | This captures the pattern of getting the byte offsets before and after
+-- decoding a subterm.
+--
+-- > openByteSpan
+-- > x <- decode
+-- > !after  <- peekByteSpan
+-- > closeByteSpan
+--
+-- @since 0.3.0.0
+decodeWithByteSpan :: Decoder s a -> Decoder s (a, ByteSpan)
+decodeWithByteSpan da = do
+    openByteSpan
+    x <- da
+    !bs <- peekByteSpan
+    closeByteSpan
+    return (x, bs)
 
 {-
 expectExactly :: Word -> Decoder (Word :#: s) s

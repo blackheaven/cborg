@@ -2,7 +2,8 @@
 
 ## 0.3.0.0
 
-* Add support for grabbing the input bytes of intervals, i.e. `getInputSpan`.
+* Add support for retrieving selected byte spans from the input data stream,
+  using `openByteSpan`, `closeByteSpan` and `peekByteSpan`.
 
 ## 0.2.10.0
 
