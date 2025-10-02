@@ -1,7 +1,8 @@
 {-# OPTIONS_GHC -fno-warn-orphans -fsimpl-tick-factor=500 #-}
 module Macro.PkgBinary where
 
-import Macro.Types
+import Distribution.PackageDescription
+
 import Data.Binary as Binary
 import Data.Binary.Get as Binary
 import Data.ByteString.Lazy as BS
@@ -22,36 +23,5 @@ deserialiseNull =
     go i = do x <- get :: Get GenericPackageDescription
               x `seq` go (i-1)
 
-instance Binary Version
-instance Binary PackageName
-instance Binary PackageId
-instance Binary VersionRange
-instance Binary Dependency
-instance Binary CompilerFlavor
-instance Binary License
-instance Binary SourceRepo
-instance Binary RepoKind
-instance Binary RepoType
-instance Binary BuildType
-instance Binary Library
-instance Binary Executable
-instance Binary TestSuite
-instance Binary TestSuiteInterface
-instance Binary TestType
-instance Binary Benchmark
-instance Binary BenchmarkInterface
-instance Binary BenchmarkType
-instance Binary BuildInfo
-instance Binary ModuleName
-instance Binary Language
-instance Binary Extension
-instance Binary KnownExtension
-instance Binary PackageDescription
-instance Binary OS
-instance Binary Arch
-instance Binary Flag
-instance Binary FlagName
-instance (Binary a, Binary b, Binary c) => Binary (CondTree a b c)
-instance Binary ConfVar
-instance Binary a => Binary (Condition a)
-instance Binary GenericPackageDescription
+-- The Cabal-syntax package provides generic derived instances.
+

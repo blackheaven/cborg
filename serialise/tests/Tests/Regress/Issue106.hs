@@ -1,6 +1,5 @@
 module Tests.Regress.Issue106 ( testTree ) where
 
-import           Data.Word (Word) -- needed for GHC 7.8.4
 import qualified Codec.Serialise as Serialise
 import qualified Codec.CBOR.Pretty as CBOR
 import           Test.Tasty

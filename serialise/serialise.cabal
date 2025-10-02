@@ -1,3 +1,4 @@
+cabal-version:       2.0
 name:                serialise
 version:             0.2.6.1
 synopsis:            A binary serialisation library for Haskell values.
@@ -26,7 +27,6 @@ bug-reports:         https://github.com/well-typed/cborg/issues
 copyright:           2015-2017 Duncan Coutts,
                      2015-2017 Well-Typed LLP,
                      2015 IRIS Connect Ltd
-cabal-version:       >=1.10
 category:            Codec
 build-type:          Simple
 tested-with:
@@ -52,7 +52,6 @@ source-repository head
 
 library
   default-language:  Haskell2010
-  ghc-options:       -Wall
   hs-source-dirs:    src
 
   exposed-modules:
@@ -80,8 +79,10 @@ library
     vector                  >= 0.10    && < 0.14,
     time                    >= 1.9.3   && < 1.15
 
-  if impl(ghc >= 8.0)
-    ghc-options: -Wcompat -Wnoncanonical-monad-instances
+  ghc-options: -Wall -Wcompat
+
+  if impl(ghc >= 9.0)
+    ghc-options: -Wunused-packages
 
 --------------------------------------------------------------------------------
 -- Tests
@@ -120,7 +121,6 @@ test-suite tests
     time,
     containers,
     unordered-containers,
-    primitive,
     cborg,
     serialise,
     QuickCheck              >= 2.15    && < 2.17,
@@ -206,7 +206,7 @@ benchmark versus
 
   default-language:  Haskell2010
   ghc-options:
-    -Wall -rtsopts -fno-cse -fno-ignore-asserts -fno-warn-orphans
+    -Wall -O2 -rtsopts -fno-cse -fno-ignore-asserts -fno-warn-orphans
 
   other-modules:
     Utils
@@ -216,35 +216,35 @@ benchmark versus
 
     -- Suite #2
     Macro
-    Macro.Types
     Macro.Load
-    Macro.DeepSeq
-    Macro.MemSize
     Macro.ReadShow
-    Macro.PkgAesonGeneric
     Macro.PkgAesonTH
     Macro.PkgBinary
     Macro.PkgCereal
     Macro.PkgStore
     Macro.CBOR
 
+  -- ghc-8.x runs out of memory compiling this module
+  if impl(ghc >= 9.0)
+    other-modules:
+      Macro.PkgAesonGeneric
+
   build-depends:
     base,
-    array                   >= 0.4     && < 0.6,
     binary                  >= 0.7     && < 0.11,
     bytestring,
+    text                    >= 1.2,
     directory               >= 1.0     && < 1.4,
+    Cabal-syntax            >= 3.8     && < 3.17,
     cborg,
     serialise,
 
     filepath                >= 1.0     && < 1.6,
-    containers,
     deepseq                 >= 1.4.4.0 && < 1.6,
     aeson                   >= 0.7     && < 2.3,
     cereal                  >= 0.5.2.0 && < 0.6,
     tar                     >= 0.4     && < 0.7,
     zlib                    >= 0.5     && < 0.8,
-    pretty                  >= 1.0     && < 1.2,
     criterion               >= 1.0     && < 1.7,
     store                   >= 0.7.1   && < 0.8,
     time

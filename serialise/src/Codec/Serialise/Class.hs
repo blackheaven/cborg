@@ -1295,10 +1295,23 @@ decodeSomeTypeRep = do
                          ++ map ("    "++) info
 
 encodeTypeRep :: TypeRep a -> Encoding
-encodeTypeRep rep  -- Handle Type specially since it's so common
+
+-- Two special cases, and two general cases.
+
+-- Handle Type specially since it's so common
+encodeTypeRep rep
   | Just HRefl <- rep `eqTypeRep` (typeRep :: TypeRep Type)
   = encodeListLen 1
  <> encodeWord 0
+
+-- Encode fun specially too
+encodeTypeRep (Fun arg res)
+  = encodeListLen 3
+ <> encodeWord 3
+ <> encodeTypeRep arg
+ <> encodeTypeRep res
+
+-- These two are the general cases, providing complete coverage by themselves.
 encodeTypeRep (Con' con ks)
   = encodeListLen 3
  <> encodeWord 1
@@ -1309,11 +1322,6 @@ encodeTypeRep (App f x)
  <> encodeWord 2
  <> encodeTypeRep f
  <> encodeTypeRep x
-encodeTypeRep (Fun arg res)
-  = encodeListLen 3
- <> encodeWord 3
- <> encodeTypeRep arg
- <> encodeTypeRep res
 
 -- | @since 0.2.0.0
 instance Typeable a => Serialise (TypeRep (a :: k)) where

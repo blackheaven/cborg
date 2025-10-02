@@ -11,3 +11,9 @@ benchmarks: True
 -- Needed for serialise benchmarks
 allow-newer:
   store-core:text
+
+package cborg
+  ghc-options: -Werror -Wno-error=deprecations
+
+package serialise
+  ghc-options: -Werror

@@ -12,8 +12,6 @@ import           Data.Ord
 
 import           Test.QuickCheck.Arbitrary
 
-import qualified Data.Vector.Primitive      as Vector.Primitive
-
 --------------------------------------------------------------------------------
 -- QuickCheck Orphans
 

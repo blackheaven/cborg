@@ -79,7 +79,6 @@ import qualified Data.ByteString      as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import           Data.Monoid ((<>))
 import           Control.Monad (ap)
 
 import           Test.QuickCheck.Arbitrary
@@ -107,11 +106,10 @@ instance Functor Decoder where
   fmap f a = a >>= return . f
 
 instance Applicative Decoder where
-  pure  = return
-  (<*>) = ap
+  pure x = Decoder (\ws -> Just (x, ws))
+  (<*>)  = ap
 
 instance Monad Decoder where
-  return x = Decoder (\ws -> Just (x, ws))
   d >>= f  = Decoder (\ws -> case runDecoder d ws of
                                Nothing       -> Nothing
                                Just (x, ws') -> runDecoder (f x) ws')
