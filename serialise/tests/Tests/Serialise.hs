@@ -67,7 +67,6 @@ import qualified Data.Vector.Unboxed        as Vector.Unboxed
 import qualified Data.Vector.Storable       as Vector.Storable
 import qualified Data.Vector.Primitive      as Vector.Primitive
 import           GHC.Fingerprint.Type (Fingerprint(..))
-import           Data.Primitive.ByteArray   as Prim
 
 import           Tests.Orphanage()
 import           Tests.Serialise.Canonical
@@ -417,7 +416,7 @@ instance Serialise Utf8ByteArray where
     decode = Utf8BA <$> decodeUtf8ByteArray
 
 instance Arbitrary Utf8ByteArray where
-    arbitrary = do
-        bss <- BSS.toShort . Text.encodeUtf8 <$> arbitrary
-        case bss of
-          BSS.SBS ba -> return $ Utf8BA $ CBOR.BA.BA $ Prim.ByteArray ba
+    arbitrary =
+      Utf8BA . CBOR.BA.fromShortByteString
+             . BSS.toShort . Text.encodeUtf8
+           <$> arbitrary

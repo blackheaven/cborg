@@ -121,7 +121,6 @@ test-suite tests
     time,
     containers,
     unordered-containers,
-    primitive,
     cborg,
     serialise,
     QuickCheck              >= 2.15    && < 2.17,

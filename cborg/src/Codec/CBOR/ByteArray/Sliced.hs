@@ -38,6 +38,9 @@ import qualified Data.Primitive.ByteArray as Prim
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Unsafe as BS
 import qualified Data.ByteString.Short as BSS
+#if !MIN_VERSION_bytestring(0,11,1)
+import qualified Data.ByteString.Short.Internal as BSS
+#endif
 import qualified Data.ByteString.Builder as BSB
 import qualified Data.ByteString.Builder.Internal as BSB
 
@@ -46,7 +49,11 @@ import Codec.CBOR.ByteArray.Internal
 data SlicedByteArray = SBA {unSBA :: !Prim.ByteArray, offset :: !Int, length :: !Int}
 
 fromShortByteString :: BSS.ShortByteString -> SlicedByteArray
+#if MIN_VERSION_bytestring(0,12,0)
+fromShortByteString (BSS.ShortByteString ba) = fromByteArray ba
+#else
 fromShortByteString (BSS.SBS ba) = fromByteArray (Prim.ByteArray ba)
+#endif
 
 fromByteString :: BS.ByteString -> SlicedByteArray
 fromByteString = fromShortByteString . BSS.toShort
