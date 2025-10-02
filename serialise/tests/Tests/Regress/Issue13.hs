@@ -4,8 +4,6 @@ module Tests.Regress.Issue13
   ( testTree -- :: TestTree
   ) where
 
-import           Data.Monoid                         ((<>))
-
 import qualified Data.Text                           as T
 import           Test.Tasty
 import           Test.QuickCheck

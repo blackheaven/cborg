@@ -32,6 +32,7 @@ import           Numeric (showHex)
 import           Numeric.Half as Half
 import           GHC.Float (float2Double)
 import           Data.Proxy
+import           Data.Kind
 
 import           Foreign
 import           System.IO.Unsafe
@@ -227,7 +228,7 @@ class (RealFloat n, Integral (FloatWord n), Show (FloatWord n),
   exponentBits    :: Proxy n -> Int
   significandBits :: Proxy n -> Int
 
-  type FloatWord n :: *
+  type FloatWord n :: Type
   wordToFloating  :: FloatWord n -> n
 --floatingToWord  :: n -> FloatWord n
 

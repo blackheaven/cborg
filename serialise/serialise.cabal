@@ -52,7 +52,7 @@ source-repository head
 
 library
   default-language:  Haskell2010
-  ghc-options:       -Wall
+  ghc-options:       -Wall -Wextra
   hs-source-dirs:    src
 
   exposed-modules:

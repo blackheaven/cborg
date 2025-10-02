@@ -45,7 +45,6 @@ import qualified Data.Text.Lazy                 as Text.Lazy
 import qualified Data.ByteString                as BS
 import qualified Data.ByteString.Lazy           as BS.Lazy
 import qualified Data.ByteString.Short          as BSS
-import qualified Data.ByteString.Short.Internal as BSS
 import           System.Exit (ExitCode(..))
 
 import qualified Codec.CBOR.ByteArray           as CBOR.BA

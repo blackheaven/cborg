@@ -36,7 +36,6 @@ import GHC.Exts (IsList(..), IsString(..))
 import qualified Data.Primitive.ByteArray as Prim
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Short as BSS
-import qualified Data.ByteString.Short.Internal as BSS
 import qualified Data.ByteString.Builder as BSB
 
 import qualified Codec.CBOR.ByteArray.Sliced as Sliced

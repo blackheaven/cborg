@@ -1,7 +1,6 @@
 module Tests.Regress.Issue162 ( testTree ) where
 
 import           Control.Monad (void)
-import           Control.Applicative ((<$), (<*))
 import           Data.Word
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as LBS

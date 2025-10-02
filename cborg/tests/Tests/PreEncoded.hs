@@ -2,8 +2,6 @@ module Tests.PreEncoded (
     testTree
   ) where
 
-import           Data.Monoid (Monoid(mconcat))
-
 import           Codec.CBOR.Term     (Term, encodeTerm)
 import           Codec.CBOR.FlatTerm (FlatTerm, toFlatTerm, TermToken(..))
 import           Codec.CBOR.Write    (toStrictByteString, toLazyByteString)
