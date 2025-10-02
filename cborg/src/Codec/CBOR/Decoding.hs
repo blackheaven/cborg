@@ -1133,7 +1133,7 @@ decodeWithByteSpan :: Decoder s a -> Decoder s (a, ByteSpan)
 decodeWithByteSpan da = do
     openByteSpan
     x <- da
-    !bs <- peekByteSpan
+    bs <- peekByteSpan
     closeByteSpan
     return (x, bs)
 

@@ -1357,7 +1357,7 @@ go_slow da bs !offset !marks = do
         !offset' = offset + intToInt64 (BS.length bs - BS.length bs')
 
     SlowPeekByteSpan bs' k ->
-        lift (k (peekMarkedByteSpan offset' marks)) >>= \daz -> go_slow daz bs' offset' marks
+        lift (k $! peekMarkedByteSpan offset' marks) >>= \daz -> go_slow daz bs' offset' marks
       where
         !offset' = offset + intToInt64 (BS.length bs - BS.length bs')
 
@@ -1480,7 +1480,7 @@ go_slow_overlapped da sz bs_cur bs_next !offset !marks =
         lift k >>= \daz -> go_slow daz bs' offset' (unmarkByteSpan marks)
       SlowPeekByteSpan bs_empty k ->
         assert (BS.null bs_empty) $
-        lift (k (peekMarkedByteSpan offset' marks)) >>= \daz -> go_slow daz bs' offset' marks
+        lift (k $! peekMarkedByteSpan offset' marks) >>= \daz -> go_slow daz bs' offset' marks
 
       SlowFail bs_unconsumed msg ->
         decodeFail (bs_unconsumed <> bs') offset'' msg
