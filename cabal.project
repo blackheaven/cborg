@@ -14,5 +14,6 @@ allow-newer:
 
 package cborg
   ghc-options: -Werror -Wno-error=deprecations
+
 package serialise
   ghc-options: -Werror
