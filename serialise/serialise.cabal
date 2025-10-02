@@ -218,12 +218,16 @@ benchmark versus
     Macro
     Macro.Load
     Macro.ReadShow
-    Macro.PkgAesonGeneric
     Macro.PkgAesonTH
     Macro.PkgBinary
     Macro.PkgCereal
     Macro.PkgStore
     Macro.CBOR
+
+  -- ghc-8.x runs out of memory compiling this module
+  if impl(ghc >= 9.0)
+    other-modules:
+      Macro.PkgAesonGeneric
 
   build-depends:
     base,

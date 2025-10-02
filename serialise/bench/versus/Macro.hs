@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 module Macro
   ( benchmarks -- :: [Benchmark]
   ) where
@@ -15,7 +16,10 @@ import qualified Macro.Load as Load
 import qualified Macro.ReadShow  as ReadShow
 import qualified Macro.PkgBinary as PkgBinary
 import qualified Macro.PkgCereal as PkgCereal
+#if __GLASGOW_HASKELL__ >= 900
+-- ghc-8.x runs out of memory compiling this module:
 import qualified Macro.PkgAesonGeneric as PkgAesonGeneric
+#endif
 import qualified Macro.PkgAesonTH as PkgAesonTH
 import qualified Macro.PkgStore as PkgStore
 
@@ -37,7 +41,9 @@ benchmarks =
     bgroup "encoding"
       [ bench "binary"        (whnf perfEncodeBinary       tstdata)
       , bench "cereal"        (whnf perfEncodeCereal       tstdata)
+#if __GLASGOW_HASKELL__ >= 900
       , bench "aeson generic" (whnf perfEncodeAesonGeneric tstdata)
+#endif
       , bench "aeson TH"      (whnf perfEncodeAesonTH      tstdata)
       , bench "read/show"     (whnf perfEncodeReadShow     tstdata)
       , bench "cbor"          (whnf perfEncodeCBOR         tstdata)
@@ -52,8 +58,10 @@ benchmarks =
         $ \tstdataC -> bench "cereal"  (whnf perfDecodeCereal tstdataC)
       , env (return $ combineChunks $ PkgAesonTH.serialise tstdata)
         $ \tstdataA -> bgroup "aeson"
-            [ bench "generic"   (whnf perfDecodeAesonGeneric tstdataA)
-            , bench "TH"        (whnf perfDecodeAesonTH      tstdataA)
+            [ bench "TH"        (whnf perfDecodeAesonTH      tstdataA)
+#if __GLASGOW_HASKELL__ >= 900
+            , bench "generic"   (whnf perfDecodeAesonGeneric tstdataA)
+#endif
             ]
       , env (return $ combineChunks $ ReadShow.serialise tstdata)
         $ \tstdataS -> bench "read/show" (whnf perfDecodeReadShow tstdataS)
@@ -71,8 +79,10 @@ benchmarks =
       $ \tstdataC -> bench "cereal" (nf perfDecodeCereal tstdataC)
       , env (return $ combineChunks $ PkgAesonTH.serialise tstdata)
       $ \tstdataA -> bgroup "aeson"
-          [ bench "generic"   (nf perfDecodeAesonGeneric tstdataA)
-          , bench "TH"        (nf perfDecodeAesonTH      tstdataA)
+          [ bench "TH"        (nf perfDecodeAesonTH      tstdataA)
+#if __GLASGOW_HASKELL__ >= 900
+          , bench "generic"   (nf perfDecodeAesonGeneric tstdataA)
+#endif
           ]
 
       , env (return $ combineChunks $ ReadShow.serialise tstdata)
@@ -84,7 +94,7 @@ benchmarks =
       ]
   ]
   where
-    perfEncodeBinary, perfEncodeCereal, perfEncodeAesonGeneric,
+    perfEncodeBinary, perfEncodeCereal,
       perfEncodeAesonTH, perfEncodeReadShow,
       perfEncodeCBOR
       :: [GenericPackageDescription] -> Int64
@@ -92,22 +102,28 @@ benchmarks =
 
     perfEncodeBinary       = BS.length . PkgBinary.serialise
     perfEncodeCereal       = BS.length . PkgCereal.serialise
-    perfEncodeAesonGeneric = BS.length . PkgAesonGeneric.serialise
     perfEncodeAesonTH      = BS.length . PkgAesonTH.serialise
     perfEncodeReadShow     = BS.length . ReadShow.serialise
     perfEncodeCBOR         = BS.length . CBOR.serialise
+#if __GLASGOW_HASKELL__ >= 900
+    perfEncodeAesonGeneric :: [GenericPackageDescription] -> Int64
+    perfEncodeAesonGeneric = BS.length . PkgAesonGeneric.serialise
+#endif
 
-    perfDecodeBinary, perfDecodeCereal, perfDecodeAesonGeneric,
+    perfDecodeBinary, perfDecodeCereal,
       perfDecodeAesonTH, perfDecodeReadShow,
       perfDecodeCBOR
       :: BS.ByteString -> [GenericPackageDescription]
 
     perfDecodeBinary       = PkgBinary.deserialise
     perfDecodeCereal       = PkgCereal.deserialise
-    perfDecodeAesonGeneric = PkgAesonGeneric.deserialise
     perfDecodeAesonTH      = PkgAesonTH.deserialise
     perfDecodeReadShow     = ReadShow.deserialise
     perfDecodeCBOR        = CBOR.deserialise
+#if __GLASGOW_HASKELL__ >= 900
+    perfDecodeAesonGeneric :: BS.ByteString -> [GenericPackageDescription]
+    perfDecodeAesonGeneric = PkgAesonGeneric.deserialise
+#endif
 
     perfDecodeStore :: B.ByteString -> [GenericPackageDescription]
     perfDecodeStore = PkgStore.deserialise
