@@ -70,11 +70,17 @@ module Codec.CBOR.Decoding
   , peekTokenType        -- :: Decoder s TokenType
   , TokenType(..)
 
-  -- ** Special operations
-  , peekAvailable        -- :: Decoder s Int
+  -- ** Byte offsets and byte spans within the input stream
+  -- $input
   , ByteOffset
   , peekByteOffset       -- :: Decoder s ByteOffset
+  , decodeWithByteOffsets
+  , ByteSpan
+  , openByteSpan         -- :: Decoder s ()
+  , closeByteSpan        -- :: Decoder s ()
+  , peekByteSpan         -- :: Decoder s LazyByteString
   , decodeWithByteSpan
+  , peekAvailable        -- :: Decoder s Int
 
   -- ** Canonical CBOR
   -- $canonical
@@ -118,6 +124,7 @@ import           GHC.Word
 import           GHC.Int
 import           Data.Text (Text)
 import           Data.ByteString (ByteString)
+import qualified Data.ByteString.Lazy as LBS
 import           Control.Applicative
 import           Control.Monad.ST
 import qualified Control.Monad.Fail as Fail
@@ -193,6 +200,9 @@ data DecodeAction s a
 #else
     | PeekByteOffset (Int#      -> ST s (DecodeAction s a))
 #endif
+    | OpenByteSpan   (ST s (DecodeAction s a))
+    | CloseByteSpan  (ST s (DecodeAction s a))
+    | PeekByteSpan   (LBS.ByteString -> ST s (DecodeAction s a))
 
       -- All the canonical variants
     | ConsumeWordCanonical    (Word# -> ST s (DecodeAction s a))
@@ -952,10 +962,79 @@ peekTokenType = Decoder (\k -> return (PeekTokenType (\tk -> k tk)))
 -- | Peek and return the length of the current buffer that we're
 -- running our decoder on.
 --
+-- This is not typically very useful. One case where it can be useful is to
+-- help mitigate resource attacks when decoding untrusted data that uses length
+-- prefixed encodings. For example, an array: when decoding an array it is most
+-- efficient to allocate a whole array and then fill it in while decoding each
+-- element. The serialised representation will provide a length, however this
+-- information cannot be trusted and used to pre-allocate the whole array,
+-- as an attacker could trivially force memory exhaustion. Knowing a lower bound
+-- on the amount of data the user has supplied can be useful to allow allocating
+-- in reasonable sized batches, which is much more efficient than having to use
+-- a fully dynamicly-sized intermediate representation (like a list). The
+-- remaining size of the current input buffer is one such lower bound.
+--
 -- @since 0.2.0.0
 peekAvailable :: Decoder s Int
 peekAvailable = Decoder (\k -> return (PeekAvailable (\len# -> k (I# len#))))
 {-# INLINE peekAvailable #-}
+
+--------------------------------------------------------------
+-- Byte offsets and byte spans
+
+-- $input
+--
+-- Sometimes it is important not just to be able to decode a CBOR serialisation
+-- but also to access the portion of the input that this corresponds to.
+--
+-- For example, in secuity-related applications it may be necessary to hash or
+-- verify a signature of a serialised CBOR term. In these cases it is vital to
+-- use the original serialised representation from the input data. While it is
+-- possible to re-serialise, that is not guaranteed to produce the same
+-- serialised representation, due to redundancy in representation. Even when
+-- using canonical CBOR it is still be best practice to use the original input.
+--
+-- The library provides two ways to get at the original input: indirectly using
+-- byte offsets and directly using byte spans.
+--
+-- 'peekByteOffset' reports the current byte offset in the input data. This can
+-- be used before and after decoding a term to find the byte offsets of the
+-- term's original serialised representation.
+--
+-- > !before <- peekByteOffset
+-- > x <- decode
+-- > !after  <- peekByteOffset
+--
+-- This pattern is captured by 'decodeWithByteOffsets'.
+--
+-- Externally to the decoder, if there is access to the original input then the
+-- byte offsets may be used to select the span corresponding to the term.
+--
+-- Alternatively, the library provides a way to get at the input bytes directly.
+-- This uses a scheme of manually marking the beginning and end of spans.
+--
+-- > openByteSpan
+-- > x <- decode
+-- > bytes <- peekByteSpan
+-- > closeByteSpan
+--
+-- This pattern is captured by 'decodeWithByteSpan'.
+--
+-- The beginning of a byte span is marked using 'openByteSpan'. Then
+-- 'peekByteSpan' can be used to return the byte span from where the span was
+-- opened, to the deccoder's current point in the input stream.
+--
+-- It is important to pair every 'openByteSpan' with a corresponding
+-- 'closeByteSpan'. The decoder maintains a stack of open byte spans. This
+-- serves two purposes: 1. to allow nested use of byte spans, and 2. to ensure
+-- input buffers are not retained unnecessarily.
+--
+-- Normally, the 'Decoder' does not retain input buffers after they have been
+-- consumed. This allows decoders to be executed on an input stream
+-- incrementally, while only keeping one input buffer in memory at once. This
+-- behaviour is modified using 'openByteSpan': all input will be retained until
+-- the corresponding 'closeByteSpan'.
+--
 
 
 -- | A 0-based offset within the overall byte sequence that makes up the
@@ -975,9 +1054,9 @@ type ByteOffset = Int64
 -- input bytes that makes up the encoded form of a term.
 --
 -- By keeping track of the byte offsets before and after decoding a subterm
--- (a pattern captured by 'decodeWithByteSpan') and if the overall input data
--- is retained then this is enables later retrieving the span of bytes for the
--- subterm.
+-- (a pattern captured by 'decodeWithByteOffsets') and if the overall input
+-- data is retained then this is enables later retrieving the span of bytes for
+-- the subterm.
 --
 -- @since 0.2.2.0
 peekByteOffset :: Decoder s ByteOffset
@@ -997,12 +1076,66 @@ peekByteOffset = Decoder (\k -> return (PeekByteOffset (\off# -> k (I64#
 -- > x <- decode
 -- > !after  <- peekByteOffset
 --
-decodeWithByteSpan :: Decoder s a -> Decoder s (a, ByteOffset, ByteOffset)
-decodeWithByteSpan da = do
+-- @since 0.3.0.0
+decodeWithByteOffsets :: Decoder s a -> Decoder s (a, ByteOffset, ByteOffset)
+decodeWithByteOffsets da = do
     !before <- peekByteOffset
     x <- da
     !after  <- peekByteOffset
     return (x, before, after)
+
+-- | A span of bytes within the overall byte sequence that makes up the
+-- input to the 'Decoder'.
+--
+type ByteSpan = LBS.ByteString
+
+-- | Mark the start of a new byte span at the decoder's current point in the
+-- input byte stream. After this, use 'peekByteSpan' to get the bytes from
+-- the most recent opening mark.
+--
+-- The use of 'openByteSpan' can be nested, and each use of 'openByteSpan'
+-- should be matched by a corresponding 'closeByteSpan'.
+--
+-- @since 0.3.0.0
+openByteSpan :: Decoder s ()
+openByteSpan = Decoder (\k -> return (OpenByteSpan (k ())))
+
+-- | Close (forget) the most recent byte span created by 'openByteSpan'. This
+-- is important for proper nesting and to avoid retaining decoder input data
+-- indefinitely.
+--
+-- @since 0.3.0.0
+closeByteSpan :: Decoder s ()
+closeByteSpan = Decoder (\k -> return (CloseByteSpan (k ())))
+
+-- | Return the byte span since the most recent use of 'openByteSpan' (that has
+-- not yet been closed by 'closeByteSpan').
+--
+-- Note: the 'ByteSpan' returned is a slice of the original decoder input
+-- stream, and thus will retain the input buffers. If you need to retain the
+-- byte span for long, it is advisable to copy the span.
+--
+-- @since 0.3.0.0
+peekByteSpan :: Decoder s ByteSpan
+peekByteSpan = Decoder (\k -> return (PeekByteSpan k))
+
+
+-- | This captures the pattern of getting the byte offsets before and after
+-- decoding a subterm.
+--
+-- > openByteSpan
+-- > x <- decode
+-- > bytes <- peekByteSpan
+-- > closeByteSpan
+--
+-- @since 0.3.0.0
+decodeWithByteSpan :: Decoder s a -> Decoder s (a, ByteSpan)
+decodeWithByteSpan da = do
+    openByteSpan
+    x <- da
+    bs <- peekByteSpan
+    closeByteSpan
+    return (x, bs)
 
 {-
 expectExactly :: Word -> Decoder (Word :#: s) s

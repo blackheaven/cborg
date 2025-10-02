@@ -1,5 +1,18 @@
 # Revision history for cborg
 
+## 0.3.0.0
+
+* Add support for retrieving selected byte spans from the input data stream,
+  using `openByteSpan`, `closeByteSpan` and `peekByteSpan`. This is generally
+  much more efficient than a twp-step process of saving offset spans and then
+  selecting the bytes for those offset spans. This is especially useful in
+  applications that need to hash or check signatures on the original serialised
+  representation of CBOR objects.
+  See for example COSE https://datatracker.ietf.org/doc/html/rfc8152
+* Change the type of `decodeWithByteSpan` to actually return a byte span, and
+  add `decodeWithByteOffsets` to provide the previous functionality that
+  returns an offset span.
+
 ## 0.2.10.0
 
 * Return `TypeUInt64` and `TypeNInt64` from `tokenType` when appropriate, fixing [#324](https://github.com/well-typed/cborg/issues/324)

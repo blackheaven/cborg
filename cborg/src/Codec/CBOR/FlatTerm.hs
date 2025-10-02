@@ -67,6 +67,7 @@ import           Data.Text (Text)
 import qualified Data.Text.Encoding as TE
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as LBS
 import           Control.Monad.ST
 import qualified Control.Monad.ST.Lazy as ST.Lazy
 
@@ -465,14 +466,18 @@ fromFlatTerm decoder ft =
     go ts@(tk:_) (PeekTokenType k) = k (tokenTypeOf tk) >>= go ts
     go ts        (PeekTokenType _) = unexpected "peekTokenType" ts
 
-    -- We don't have real bytes so we have to give these two operations
-    -- different interpretations: remaining tokens and just 0 for offsets.
+    -- We don't have real bytes so we have to give these operations
+    -- different interpretations: remaining tokens and just 0 for offsets, and
+    -- empty for byte spans.
     go ts        (PeekAvailable k) = k (unI# (length ts)) >>= go ts
 #if defined(ARCH_32bit)
     go ts        (PeekByteOffset k)= k (unI64# 0) >>= go ts
 #else
     go ts        (PeekByteOffset k)= k 0# >>= go ts
 #endif
+    go ts        (OpenByteSpan k)  = k >>= go ts
+    go ts        (CloseByteSpan k) = k >>= go ts
+    go ts        (PeekByteSpan k)  = k LBS.empty >>= go ts
 
     go _  (Fail msg) = return $ Left msg
     go [] (Done x)   = return $ Right x

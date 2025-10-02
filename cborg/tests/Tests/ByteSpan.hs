@@ -1,9 +1,10 @@
 {-# LANGUAGE DeriveFunctor, BangPatterns #-}
 
-module Tests.ByteOffset (testTree) where
+module Tests.ByteSpan (testTree) where
 
 import           Data.Word
 import           Data.Either (isLeft)
+import           Data.String (fromString)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as LT
 import qualified Data.ByteString as BS
@@ -14,6 +15,7 @@ import           Control.Applicative
 import           Codec.CBOR.Decoding
 import           Codec.CBOR.Read (deserialiseFromBytes)
 import           Codec.CBOR.Term (Term)
+import qualified Codec.CBOR.Term as Term (Term(..))
 
 import           Test.Tasty (TestTree, testGroup, localOption)
 import           Test.Tasty.QuickCheck (testProperty, QuickCheckMaxSize(..))
@@ -28,22 +30,37 @@ import Prelude hiding (encodeFloat, decodeFloat)
 
 testTree :: TestTree
 testTree =
-  testGroup "peekByteOffset"
+  testGroup "peekByteSpan"
     [ testGroup "ATerm framework"
         [ testProperty "isomorphic 1" prop_ATerm_isomorphic
         , testProperty "isomorphic 2" prop_ATerm_isomorphic2
         , testProperty "isomorphic 3" prop_ATerm_isomorphic3
         ]
+    , testGroup "examples"
+        -- basic smoke tests
+        [ testProperty "ex01" $ prop_peekByteSpan_deserialise $ Term.TFloat 1.0 -- simplest test
+        , testProperty "ex02" $ prop_peekByteSpan_deserialise $ Term.TList [Term.TSimple 0] -- tests non-zero offsets
+        , testProperty "ex03" $ prop_peekByteSpan_splits2 $ Term.TFloat 1.0 -- tests multiple chunks
+        , testProperty "ex04" $ prop_peekByteSpan_splits2 $ Term.TList [Term.TStringI $ fromString $ replicate 100 'x'] -- tests getTokenVarLen
+        , testProperty "ex05" $ prop_peekByteSpan_splits3 $ Term.TString $ fromString "abcdef"
+        , testProperty "ex06" $ prop_peekByteSpan_splits2 $ Term.TMapI [(Term.TListI [],Term.TString (fromString "ab")  )]
+        , testProperty "ex07" $ prop_peekByteSpan_splits3 $ Term.TMapI [(Term.TString (fromString "xyz"),Term.TStringI (fromString ""))]
+        ]
     , testProperty "empty-deserialise" empty_deserialise
     , testProperty "empty-deserialise-fail" empty_deserialise_fail
-    , testProperty "bytes deserialise" prop_peekByteOffset_deserialise
-    , testProperty "bytes reserialise" prop_peekByteOffset_reserialise
-    , testProperty "non-canonical encoding" prop_peekByteOffset_noncanonical
+    , testProperty "bytes deserialise" prop_peekByteSpan_deserialise
+    , testProperty "bytes reserialise" prop_peekByteSpan_reserialise
+    , testProperty "non-canonical encoding" prop_peekByteSpan_noncanonical
     , localOption (QuickCheckMaxSize 30) $
-      testProperty "same offsets with all 2-splits" prop_peekByteOffset_splits2
+      testProperty "same offsets with all 2-splits" prop_peekByteSpan_splits2
     , localOption (QuickCheckMaxSize 20) $
-      testProperty "same offsets with all 3-splits" prop_peekByteOffset_splits3
+      testProperty "same offsets with all 3-splits" prop_peekByteSpan_splits3
     ]
+
+
+--------------------------------------------------------------------------------
+-- Properties of the framework
+--
 
 -- | Variation on 'prop_ATerm_isomorphic', checking that serialising as a
 -- 'Term', deserialising as an 'ATerm' and converting back gives an equivalent
@@ -62,13 +79,19 @@ prop_ATerm_isomorphic3 t =
             (convertTermToATerm . canonicaliseTerm) t
   `eqATermProp` (fmap (const ()) . deserialiseATerm . serialiseTerm) t
 
+
 --------------------------------------------------------------------------------
--- Properties of peekByteOffset
+-- Properties of peekByteSpan
+--
+-- The tests here are based on the tests for peekByteOffset. The peekByteOffset
+-- tests need a two-step deserialiseATerm: first to decide offset spans and
+-- then to select out the original input, whereas with peekByteSpan we can do
+-- that in one step.
 --
 
 -- | A smoke test that nothing weird happens with an empty span the input.
 empty_deserialise :: Property
-empty_deserialise = res === (0, 0)
+empty_deserialise = res === LBS.empty
   where
     -- unfortunately we need a non-empty input stream.
     -- the decoder will fail unconditionally, if there are commands,
@@ -78,11 +101,10 @@ empty_deserialise = res === (0, 0)
 empty_deserialise_fail :: Bool
 empty_deserialise_fail = isLeft (deserialiseFromBytes emptyDecoder LBS.empty)
 
-emptyDecoder :: Decoder s Offsets
+emptyDecoder :: Decoder s LBS.ByteString
 emptyDecoder = do
-    start <- peekByteOffset
-    end <- peekByteOffset
-    return (start, end)
+    openByteSpan
+    peekByteSpan
 
 -- | A key consistency property for terms annotated with their bytes:
 -- taking those bytes and deserialising them gives the corresponding term
@@ -95,22 +117,18 @@ prop_ATerm_deserialise t@(ATerm _ bs) =
 -- with their bytes: taking the term and serialising it gives the bytes.
 --
 -- Note this is /only/ expected to hold for canonical encodings. See
--- 'prop_peekByteOffset_noncanonical' for a demonstration of this not holding
+-- 'prop_peekByteSpan_noncanonical' for a demonstration of this not holding
 -- for non-canonical encodings.
 --
 prop_ATerm_reserialise :: ATerm ByteSpan -> Bool
 prop_ATerm_reserialise t@(ATerm _ bs) =
     serialiseTerm (convertATermToTerm t) == bs
 
-prop_ATerm_reserialise' :: ATerm ByteSpan -> Property
-prop_ATerm_reserialise' t@(ATerm _ bs) =
-    serialiseTerm (convertATermToTerm t) === bs
-
 -- | For an 'ATerm' annotated with its bytes (obtained by decoding a term),
 -- 'prop_ATerm_deserialise' should be true for the whole term and all subterms.
 --
-prop_peekByteOffset_deserialise :: Term -> Property
-prop_peekByteOffset_deserialise t =
+prop_peekByteSpan_deserialise :: Term -> Property
+prop_peekByteSpan_deserialise t =
     conjoin (map prop_ATerm_deserialise (subterms t'))
   where
     t' = deserialiseATerm (serialiseTerm t)
@@ -119,22 +137,22 @@ prop_peekByteOffset_deserialise t =
 -- term), 'prop_ATerm_serialise' should be true for the whole term and all
 -- subterms.
 --
-prop_peekByteOffset_reserialise :: Term -> Property
-prop_peekByteOffset_reserialise t =
-    conjoin (map prop_ATerm_reserialise' (subterms t'))
+prop_peekByteSpan_reserialise :: Term -> Bool
+prop_peekByteSpan_reserialise t =
+    all prop_ATerm_reserialise (subterms t')
   where
     t' = deserialiseATerm (serialiseTerm t)
 
 -- | For an 'ATerm' annotated with its bytes obtained by decoding a
 -- /non-canonical/ term, 'prop_ATerm_serialise' should not always hold.
 --
--- This is in some sense the essence of why we want 'peekByteOffset' in the
+-- This is in some sense the essence of why we want 'peekByteSpan' in the
 -- first place: to get the bytes corresponding to a term we have to get the
 -- original input bytes since we cannot rely on re-serialising to recover the
 -- bytes (at least not without relying on and checking for canonical encodings).
 --
-prop_peekByteOffset_noncanonical :: RefImpl.Term -> Property
-prop_peekByteOffset_noncanonical t =
+prop_peekByteSpan_noncanonical :: RefImpl.Term -> Property
+prop_peekByteSpan_noncanonical t =
     not (RefImpl.isCanonicalTerm t) ==>
     not (prop_ATerm_reserialise t')
   where
@@ -144,61 +162,49 @@ prop_peekByteOffset_noncanonical t =
 -- block boundaries in the input data stream. This checks the property for all
 -- possible 2-chunk splits of the input data.
 --
-prop_peekByteOffset_splits2 :: Term -> Bool
-prop_peekByteOffset_splits2 t =
-    and [ deserialiseATermOffsets lbs' `eqATerm` t'
-        | lbs' <- splits2 lbs ]
+prop_peekByteSpan_splits2 :: Term -> Property
+prop_peekByteSpan_splits2 t =
+    conjoin [ counterexample (show (LBS.toChunks lbs')) $ deserialiseATerm lbs' `eqATermProp` t'
+            | lbs' <- splits2 lbs ]
   where
     lbs = serialiseTerm t
-    t'  = deserialiseATermOffsets lbs
+    t'  = deserialiseATerm lbs
 
 -- | The offsets we get when decoding a term should be the same irrespective of
 -- block boundaries in the input data stream. This checks the property for all
 -- possible 3-chunk splits of the input data.
 --
-prop_peekByteOffset_splits3 :: Term -> Bool
-prop_peekByteOffset_splits3 t =
-    and [ deserialiseATermOffsets lbs' `eqATerm` t'
-        | lbs' <- splits3 lbs ]
+prop_peekByteSpan_splits3 :: Term -> Property
+prop_peekByteSpan_splits3 t =
+    conjoin [ counterexample (show (LBS.toChunks lbs')) $ deserialiseATerm lbs' `eqATermProp` t'
+            | lbs' <- splits3 lbs ]
   where
     lbs = serialiseTerm t
-    t'  = deserialiseATermOffsets lbs
+    t'  = deserialiseATerm lbs
 
 --------------------------------------------------------------------------------
 -- Decoding a term, annotated with its underlying bytes
 --
 
-type Offsets  = (ByteOffset, ByteOffset)
-
-deserialiseATermOffsets :: LBS.ByteString -> ATerm Offsets
-deserialiseATermOffsets = either throw snd . deserialiseFromBytes decodeATerm
-
 deserialiseATerm :: LBS.ByteString -> ATerm ByteSpan
-deserialiseATerm lbs = atermOffsetsToBytes lbs (deserialiseATermOffsets lbs)
+deserialiseATerm = either throw snd . deserialiseFromBytes decodeATerm
 
-atermOffsetsToBytes :: LBS.ByteString -> ATerm Offsets -> ATerm ByteSpan
-atermOffsetsToBytes original =
-    fmap (`slice` original)
-  where
-    slice :: (ByteOffset, ByteOffset) -> LBS.ByteString -> LBS.ByteString
-    slice (n,m) = LBS.take (m-n) . LBS.drop n
-
-
-decodeATerm :: Decoder s (ATerm Offsets)
+decodeATerm :: Decoder s (ATerm ByteSpan)
 decodeATerm = do
-    start <- peekByteOffset
+    openByteSpan
     t     <- decodeTermFATerm
-    end   <- peekByteOffset
-    return (ATerm t (start, end))
+    lbs   <- peekByteSpan
+    closeByteSpan
+    return (ATerm t lbs)
 
-decodeTermFATerm :: Decoder s (TermF (ATerm Offsets))
+decodeTermFATerm :: Decoder s (TermF (ATerm ByteSpan))
 decodeTermFATerm = do
     tkty <- peekTokenType
     case tkty of
       TypeUInt   -> do w <- decodeWord
                        return $! fromWord w
                     where
-                      fromWord :: Word -> TermF (ATerm Offsets)
+                      fromWord :: Word -> TermF (ATerm ByteSpan)
                       fromWord w
                         | w <= fromIntegral (maxBound :: Int)
                                     = TInt     (fromIntegral w)
@@ -266,7 +272,7 @@ decodeTermFATerm = do
       TypeInvalid -> fail "invalid token encoding"
 
 
-decodeBytesIndefLen :: [BS.ByteString] -> Decoder s (TermF (ATerm Offsets))
+decodeBytesIndefLen :: [BS.ByteString] -> Decoder s (TermF (ATerm ByteSpan))
 decodeBytesIndefLen acc = do
     stop <- decodeBreakOr
     if stop then return $! TBytesI (LBS.fromChunks (reverse acc))
@@ -274,7 +280,7 @@ decodeBytesIndefLen acc = do
                     decodeBytesIndefLen (bs : acc)
 
 
-decodeStringIndefLen :: [T.Text] -> Decoder s (TermF (ATerm Offsets))
+decodeStringIndefLen :: [T.Text] -> Decoder s (TermF (ATerm ByteSpan))
 decodeStringIndefLen acc = do
     stop <- decodeBreakOr
     if stop then return $! TStringI (LT.fromChunks (reverse acc))
@@ -282,7 +288,7 @@ decodeStringIndefLen acc = do
                     decodeStringIndefLen (str : acc)
 
 
-decodeListN :: Int -> [ATerm Offsets] -> Decoder s (TermF (ATerm Offsets))
+decodeListN :: Int -> [ATerm ByteSpan] -> Decoder s (TermF (ATerm ByteSpan))
 decodeListN !n acc =
     case n of
       0 -> return $! TList (reverse acc)
@@ -290,7 +296,7 @@ decodeListN !n acc =
               decodeListN (n-1) (t : acc)
 
 
-decodeListIndefLen :: [ATerm Offsets] -> Decoder s (TermF (ATerm Offsets))
+decodeListIndefLen :: [ATerm ByteSpan] -> Decoder s (TermF (ATerm ByteSpan))
 decodeListIndefLen acc = do
     stop <- decodeBreakOr
     if stop then return $! TListI (reverse acc)
@@ -298,7 +304,7 @@ decodeListIndefLen acc = do
                     decodeListIndefLen (tm : acc)
 
 
-decodeMapN :: Int -> [(ATerm Offsets, ATerm Offsets)] -> Decoder s (TermF (ATerm Offsets))
+decodeMapN :: Int -> [(ATerm ByteSpan, ATerm ByteSpan)] -> Decoder s (TermF (ATerm ByteSpan))
 decodeMapN !n acc =
     case n of
       0 -> return $! TMap (reverse acc)
@@ -307,7 +313,7 @@ decodeMapN !n acc =
               decodeMapN (n-1) ((tm, tm') : acc)
 
 
-decodeMapIndefLen :: [(ATerm Offsets, ATerm Offsets)] -> Decoder s (TermF (ATerm Offsets))
+decodeMapIndefLen :: [(ATerm ByteSpan, ATerm ByteSpan)] -> Decoder s (TermF (ATerm ByteSpan))
 decodeMapIndefLen acc = do
     stop <- decodeBreakOr
     if stop then return $! TMapI (reverse acc)
