@@ -30,28 +30,33 @@ encodeGenUTF8 :: String -> (BAS.SlicedByteArray, UTF8Encoding)
 encodeGenUTF8 st = runST $ do
     -- We slightly over-allocate such that we won't need to copy in the
     -- ASCII-only case.
-    ba <- newByteArray (length st + 4)
-    go ba ConformantUTF8 0 st
+    let cap = length st + 4
+    ba <- newByteArray cap
+    go ba cap ConformantUTF8 0 st
   where
-    go :: MutableByteArray s -> UTF8Encoding
-       -> Int -> [Char]
+    go :: MutableByteArray s
+       -> Int
+       -> UTF8Encoding
+       -> Int
+       -> [Char]
        -> ST s (BAS.SlicedByteArray, UTF8Encoding)
-    go ba !enc !off  [] = do
+    go !ba !_cap !enc !off  [] = do
         ba' <- unsafeFreezeByteArray ba
         return (BAS.SBA ba' 0 off, enc)
-    go ba enc off  (c:cs)
+    go !ba !cap !enc !off (c:cs)
       | off + 4 >= cap = do
         -- We ran out of room; reallocate and copy
-        ba' <- newByteArray (cap + cap `div` 2 + 1)
+        let cap' = cap + cap `div` 2 + 1
+        ba' <- newByteArray cap'
         copyMutableByteArray ba' 0 ba 0 off
-        go ba' enc off (c:cs)
+        go ba' cap' enc off (c:cs)
 
       | c >= '\x10000' = do
         writeByteArray ba (off+0) (0xf0 .|. (0x07 .&. shiftedByte 18))
         writeByteArray ba (off+1) (0x80 .|. (0x3f .&. shiftedByte 12))
         writeByteArray ba (off+2) (0x80 .|. (0x3f .&. shiftedByte  6))
         writeByteArray ba (off+3) (0x80 .|. (0x3f .&. shiftedByte  0))
-        go ba enc (off+4) cs
+        go ba cap enc (off+4) cs
 
       | c >= '\x0800'  = do
         writeByteArray ba (off+0) (0xe0 .|. (0x0f .&. shiftedByte 12))
@@ -62,20 +67,19 @@ encodeGenUTF8 st = runST $ do
         let enc'
               | isSurrogate c = GeneralisedUTF8
               | otherwise     = enc
-        go ba enc' (off+3) cs
+        go ba cap enc' (off+3) cs
 
       | c >= '\x0080'  = do
         writeByteArray ba (off+0) (0xc0 .|. (0x1f .&. shiftedByte  6))
         writeByteArray ba (off+1) (0x80 .|. (0x3f .&. shiftedByte  0))
-        go ba enc (off+2) cs
+        go ba cap enc (off+2) cs
 
       | c <= '\x007f'  = do
         writeByteArray ba off (fromIntegral n :: Word8)
-        go ba enc (off+1) cs
+        go ba cap enc (off+1) cs
 
       | otherwise      = error "encodeGenUTF8: Impossible"
       where
-        cap = sizeofMutableByteArray ba
         n = ord c
         shiftedByte :: Int -> Word8
         shiftedByte shft = fromIntegral $ n `shiftR` shft
