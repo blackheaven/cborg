@@ -155,7 +155,7 @@ test-suite cborg-tests
     base16-bytestring       >= 1.0     && < 1.1,
     deepseq,
     half,
-    QuickCheck              >= 2.9     && < 2.17,
+    QuickCheck              >= 2.9     && < 2.18,
     random,
     scientific              >= 0.3     && < 0.4,
     tasty                   >= 0.11    && < 1.6,
